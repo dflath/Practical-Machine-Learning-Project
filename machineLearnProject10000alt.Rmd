@@ -1,0 +1,223 @@
+Human Activity Recognition
+========================================================
+
+Can different human activities be distinguished using data automatically collected by sensors attached to the actor's body?  We explore this question with the Weight Lifting Exercise Dataset described here:  http://groupware.les.inf.puc-rio.br/har
+
+The data concerns dumbbell bicep curls done in one of five different manners (one correct, four incorrect) by 6 young subjects.   If poor exercise technique can be automatically detected and diagnosed, efficiencies in training for exercises could be achieved.  More information on published work with the data is available here:  
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+
+## Getting the data
+
+```{r echo = FALSE,message = FALSE}
+setwd("/Users/flath/Google Drive/Coursera/DataScience/practicalMachineLearning/machineLearningProject")
+```
+
+The data is available for downloading from the internet.
+
+```{r echo = TRUE, eval = FALSE}
+if (!file.exists("pmltraining.csv")){
+        urlTrain <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv" 
+        download.file(url=urlTrain, destfile="./pmltraining.csv")      
+}
+if (!file.exists("pmltesting.csv")){
+        urlTest <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv" 
+        download.file(url=urlTest, destfile="./pmltesting.csv")      
+}
+
+pmltraining <- read.csv("./pmltraining.csv")
+pmltesting <- read.csv("./pmltesting.csv")
+```
+
+```{r  include = FALSE}
+load(file = "pmltraining.Rda")
+pmltesting <- read.csv("./pmltesting.csv")
+```
+
+```{r echo = FALSE, eval = FALSE}
+class(pmltraining)
+dim(pmltraining)
+class(pmltesting)
+dim(pmltesting)
+names(pmltesting) == names(pmltraining)
+sum(!(names(pmltesting)[c(1:159)] == names(pmltraining)[c(1:159)]))
+names(pmltesting)[160]
+names(pmltraining)[160]
+```
+
+
+```{r echo = FALSE, eval = FALSE}
+str(pmltraining)
+str(pmltesting)
+```
+
+```{r}
+dim(pmltraining)
+dim(pmltesting)
+```
+It's a large data set, 19622 cases and 160 variables.  There are 20 cases provided as "unknowns" to used as test cases.
+
+The first 159 variables are potential predictors. Variable 160 is the response variable, "classe", for the training set. for the testing set, variable 160,  "problem_id",  gives the problem number, keyed to the 20 problems to be submitted to the Coursera/Johns Hopkins Practical Machine Learning course.
+
+```{r}
+class(pmltraining[,160])
+table(pmltraining[,160])
+```
+
+T`here are 5 response levels, A, B, C, D, and E. Given values for the first 159 variables, our task is to predict the response A, B, C, D, and E.
+
+## Cleaning the data
+
+There is plenty of missing data.  Let's quantify that observation, checking the fraction of NAs for each variable.
+
+```{r}
+naCount = integer()
+naFraction = numeric()
+numcoltraining <-  ncol(pmltraining)
+numrowtraining <-  nrow(pmltraining)
+for(n in 1:numcoltraining) {
+        naCount[n] <- sum(is.na(pmltraining[,n]))
+        naFraction[n] <- naCount[n]/numrowtraining
+}
+checknas <- data.frame(names(pmltraining), naFraction)
+checknas
+```
+Thus it turns out that the variables divide neatly into two sets, those with no missing data and those with over 97 percent NAs. We begin to build the cleaner *training* and *testing* sets we will actually use by selecting just the variables without missing data.
+
+```{r}
+goodvarsL <-  naFraction < 0.01 
+sum(goodvarsL)
+max(naCount[goodvarsL])
+training <- pmltraining[, names(pmltraining)[goodvarsL] ]
+testing <- pmltesting[, names(pmltesting)[goodvarsL] ]
+dim(training)
+dim(testing)
+```
+
+We have reduced the number of variables from 160 to 93.
+
+```{r echo = FALSE, eval = FALSE}
+trainingNO <- pmltraining[, names(pmltraining)[!goodvarsL]]
+dim(training)
+dim(trainingNO)
+```
+
+The variable X is a unique identifier for the cases, so it is not useful for prediction. We drop it.
+
+```{r}
+training <- training[ , !names(training)=="X"]
+testing <-  testing[ , !names(testing)=="X"]
+```
+
+
+We will build our predictor with a random forest.   We plan to use the caret package, which calls randomForest command, which at present does not accept categorical predictor variables with 32 or more levels. Since there are some in the training data set, we remove them.
+
+```{r}
+numcol <- ncol(training)
+varkeep <- rep(TRUE, numcol)
+for (n in 1:(numcol-1) ) {
+        temp <- training[ ,n]
+        if ( class(temp) == "factor" )   {
+                if (nlevels(temp) >= 32) {
+                        varkeep[n] <- FALSE
+                }         
+        }     
+}
+sum(varkeep) 
+```
+
+So we only keep 67 predictor variables and the 1 response variable.
+
+```{r}
+train1 <- training[,varkeep]
+test <- testing[,varkeep]
+dim(train1)
+```
+
+```{r echo = FALSE, eval = FALSE }
+str(train1)
+dim(test)
+names(train1)
+names(test)
+```
+
+But now we note that 9 of the variables in the 20 case test set are missing all data.  We remove those variables from the data set.
+
+```{r}
+badTestVars <- c("kurtosis_yaw_belt", "skewness_yaw_belt", "amplitude_yaw_belt", "kurtosis_yaw_dumbbell", "skewness_yaw_dumbbell", "amplitude_yaw_dumbbell", "kurtosis_yaw_forearm", "skewness_yaw_forearm", "amplitude_yaw_forearm" )
+train1 <- train1[,!(names(train1) %in% badTestVars )]
+dim(train1)
+test <- test[,!(names(test) %in% badTestVars )]
+dim(test)
+```
+
+So in the end we  only keep 58 predictor variables and the 1 response variable.
+
+
+
+## Separating off a cross-validation set for checking out-of-sample accuracy
+
+
+Because it takes so long to run the full data set, we run it on only part of the data.  We take a random selection of 10000 of the 19622 observations
+
+```{r}
+set.seed(12345)
+nsample <- 10000
+samples <- sample(nrow(train1), size = nsample)
+train1 <- train1[samples,]
+```
+
+We partition our training data set train1 into two subsets:  train2 contains 90% of the cases and will be used to train the predictor.  crossval2 contains 10% of the cases and will be used to make an out of sample estimate of the accuracy. 
+
+```{r}
+
+long <- nrow(train1)
+trainrows <- sample(long, size = round(0.9*long))
+crossvrows <- c(1:long)[is.na(pmatch(x=c(1:long), table = trainrows))]
+train2 <- train1[trainrows,]
+crossval2 <- train1[crossvrows,]
+dim(train2)
+dim(crossval2)
+```
+
+
+## Building and evaluating the predictor
+
+We use the caret package to build a random forest predictor.  It takes about 5 hours to run on our reduced data set, so we save the predictor as an RDS file for future use, enabling us to deactivate the train command command during final editing of the rmd file. During the editing, we read in the modFit1 file that the train command produced the first time through.
+
+```{r message = FALSE}
+library(caret)
+```
+
+```{r eval = FALSE}
+modFit1 <- train(classe~ ., data=train2, method="rf", prox=TRUE)
+modFit1
+saveRDS(modFit1, "model10000alt.RDS")
+```
+
+```{r }
+modFit1 = readRDS("model10000alt.RDS")
+modFit1
+```
+
+Now for a prediction on the cross validation set.  We are able to compare the predictions with the true values on 1000 cases that are not part of the training set.
+
+```{r message = FALSE}
+predictCrossVal <- predict(modFit1, crossval2)
+rightOrWrong <- predictCrossVal == crossval2[, "classe"]
+table(rightOrWrong)
+accuracy <- sum(rightOrWrong)/length(rightOrWrong)
+accuracy
+```
+
+The predictor was correct in 999 out of 1000 cases in the cross-validation set, an accuracy of 99.9%.  
+
+## Predicting the unknown test set
+
+Finally, we use our predictor to classify the twenty observations with unknown solution that constitute the Practical Machine Learning course problem set.
+
+```{r }
+predictVars1 <- predict(modFit1, test)
+predictVars1
+```
