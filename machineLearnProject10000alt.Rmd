@@ -1,3 +1,6 @@
+---
+output: pdf_document
+---
 Human Activity Recognition
 ========================================================
 
@@ -211,7 +214,7 @@ accuracy <- sum(rightOrWrong)/length(rightOrWrong)
 accuracy
 ```
 
-The predictor was correct in 999 out of 1000 cases in the cross-validation set, an accuracy of 99.9%.  
+The predictor was correct in 999 out of 1000 cases in the cross-validation set, an accuracy of 99.9%.   Th estimated out-of-sample error rate is 0.1%.
 
 ## Predicting the unknown test set
 
